@@ -1,9 +1,13 @@
 {
   "name": "educonnect-api",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "API Node.js/Express do portal EduConnect",
   "main": "server.js",
-  "scripts": { "start": "node server.js", "dev": "node --watch server.js" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "seed-senhas": "node seed-senhas.js"
+  },
   "engines": { "node": ">=18" },
   "dependencies": {
     "bcryptjs": "^2.4.3",
