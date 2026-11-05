@@ -408,7 +408,13 @@ app.use((err, req, res, next) => {
   if (err.type === "entity.too.large") return res.status(413).json({ erro: "Dados grandes demais." });
   if (err.code === "ER_DUP_ENTRY") return res.status(409).json({ erro: "Já existe um cadastro com este e-mail, CPF ou matrícula." });
   if (err.status) return res.status(err.status).json({ erro: err.message });
-  console.error(err);
+  console.error(`[ERRO ${req.method} ${req.originalUrl}] código=${err.code || "-"} | ${err.sqlMessage || err.message}`); // Mostra a causa real no log do Render
+  console.error(err.stack);
+  // Problemas de banco (tabela/coluna ausente, coluna NOT NULL antiga, senha ou host errados): mensagem que aponta o caminho da correção
+  const ESQUEMA = ["ER_NO_SUCH_TABLE", "ER_BAD_FIELD_ERROR", "ER_BAD_NULL_ERROR", "ER_NO_DEFAULT_FOR_FIELD", "ER_DATA_TOO_LONG", "ER_WARN_DATA_OUT_OF_RANGE"];
+  const CONEXAO = ["ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "ER_ACCESS_DENIED_ERROR", "ER_DBACCESS_DENIED_ERROR", "ER_BAD_DB_ERROR", "PROTOCOL_CONNECTION_LOST"];
+  if (ESQUEMA.includes(err.code)) return res.status(500).json({ erro: "O banco de dados está desatualizado. Importe novamente o schema.sql (veja o log do servidor)." });
+  if (CONEXAO.includes(err.code)) return res.status(500).json({ erro: "Não foi possível acessar o banco de dados. Confira as variáveis DB_* do servidor (veja o log)." });
   res.status(500).json({ erro: "Erro interno do servidor." });
 });
 
