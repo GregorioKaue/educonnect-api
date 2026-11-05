@@ -10,7 +10,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 
-const { JWT_SECRET, CODIGO_ESCOLA, SMTP_HOST } = process.env;
+const { JWT_SECRET, SMTP_HOST } = process.env; // CODIGO_ESCOLA foi removido: o cadastro de professor não exige mais esse código
 const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:5500").replace(/\/$/, "");
 const PROD = process.env.NODE_ENV === "production";
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
@@ -61,12 +61,12 @@ function cpfOk(valor) {
   return true;
 }
 
-// Valida nome, e-mail e CPF (cpfObrigatorio = false aceita CPF vazio).
-function pessoa(b, cpfObrigatorio = true) {
+// Valida nome e e-mail. O CPF é OPCIONAL: vazio vira null; se for enviado, precisa ser válido.
+function pessoa(b) {
   const nome = txt(b.nome, 120), email = txt(b.email, 150).toLowerCase(), cpf = digitos(b.cpf);
   if (nome.length < 3) throw new Erro(400, "Informe o nome completo.");
   if (!emailOk(email)) throw new Erro(400, "Informe um e-mail válido.");
-  if ((cpfObrigatorio || cpf) && !cpfOk(cpf)) throw new Erro(400, "Informe um CPF válido.");
+  if (cpf && !cpfOk(cpf)) throw new Erro(400, "O CPF informado é inválido.");
   return { nome, email, cpf: cpf || null };
 }
 
@@ -128,9 +128,9 @@ const transporte = SMTP_HOST ? nodemailer.createTransport({
   auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined
 }) : null;
 
-async function enviarRecuperacao(email, cpf) {
+async function enviarRecuperacao(email) { // Recuperação só pelo e-mail (o CPF não é mais obrigatório)
   for (const [tipo, tabela] of [["aluno", "alunos"], ["professor", "professores"]]) {
-    const [[u]] = await pool.query(`SELECT id, nome FROM ${tabela} WHERE email = ? AND cpf = ?`, [email, cpf]);
+    const [[u]] = await pool.query(`SELECT id, nome FROM ${tabela} WHERE email = ?`, [email]);
     if (!u) continue;
     const token = crypto.randomBytes(32).toString("hex"); // 64 caracteres hex, como o redefinir-senha.html exige
     const hash = crypto.createHash("sha256").update(token).digest("hex");
@@ -163,7 +163,7 @@ const limite = (max, minutos) => rateLimit({
   handler: (req, res) => res.status(429).json({ erro: "Muitas tentativas. Aguarde alguns minutos e tente de novo." })
 });
 
-app.get("/api/health", wrap(async (req, res) => { await pool.query("SELECT 1"); res.json({ ok: true }); }));
+app.get(["/health", "/api/health"], wrap(async (req, res) => { await pool.query("SELECT 1"); res.json({ ok: true, banco: true }); })); // /health é o caminho usado no Render
 
 // ===== /api/auth =====
 const auth = express.Router();
@@ -181,7 +181,7 @@ auth.post("/login/professor", wrap(async (req, res) => {
 }));
 
 auth.post("/cadastro/aluno", wrap(async (req, res) => {
-  const { nome, email, cpf } = pessoa(req.body);
+  const { nome, email, cpf } = pessoa(req.body); // cpf pode ser null
   const turma = txt(req.body.turma, 30);
   if (!turma) throw new Erro(400, "Informe a turma.");
   if (!senhaOk(req.body.senha)) throw new Erro(400, "A senha deve ter de 8 a 72 caracteres.");
@@ -190,11 +190,7 @@ auth.post("/cadastro/aluno", wrap(async (req, res) => {
 }));
 
 auth.post("/cadastro/professor", wrap(async (req, res) => {
-  if (!CODIGO_ESCOLA) throw new Erro(503, "Cadastro de professores indisponível no momento.");
-  const h = s => crypto.createHash("sha256").update(String(s)).digest();
-  if (!crypto.timingSafeEqual(h(req.body.codigoEscola ?? ""), h(CODIGO_ESCOLA)))
-    throw new Erro(403, "Código da escola inválido.");
-  const { nome, email, cpf } = pessoa(req.body);
+  const { nome, email, cpf } = pessoa(req.body); // sem código da escola; cpf pode ser null
   const disciplina = txt(req.body.disciplina, 80);
   if (!disciplina) throw new Erro(400, "Informe a disciplina.");
   if (!senhaOk(req.body.senha)) throw new Erro(400, "A senha deve ter de 8 a 72 caracteres.");
@@ -204,9 +200,9 @@ auth.post("/cadastro/professor", wrap(async (req, res) => {
 }));
 
 auth.post("/esqueci-senha", wrap(async (req, res) => {
-  const email = txt(req.body.email, 150).toLowerCase(), cpf = digitos(req.body.cpf);
-  if (!emailOk(email) || !cpfOk(cpf)) throw new Erro(400, "Informe um e-mail e um CPF válidos.");
-  enviarRecuperacao(email, cpf).catch(e => console.error("Falha na recuperação:", e.message)); // Sem await: resposta igual haja ou não cadastro
+  const email = txt(req.body.email, 150).toLowerCase();
+  if (!emailOk(email)) throw new Erro(400, "Informe um e-mail válido.");
+  enviarRecuperacao(email).catch(e => console.error("Falha na recuperação:", e.message)); // Sem await: resposta igual haja ou não cadastro
   res.json({ mensagem: "Se os dados estiverem corretos, você receberá as instruções por e-mail." });
 }));
 
@@ -290,7 +286,7 @@ prof.get("/alunos", wrap(async (req, res) => {
 }));
 
 prof.post("/alunos", wrap(async (req, res) => {
-  const { nome, email, cpf } = pessoa(req.body, false);
+  const { nome, email, cpf } = pessoa(req.body);
   const turma = txt(req.body.turma, 30), matricula = txt(req.body.matricula, 30);
   if (!turma || !matricula) throw new Erro(400, "Informe turma e matrícula.");
   let senha = req.body.senha, provisoria = null;
@@ -304,7 +300,7 @@ prof.post("/alunos", wrap(async (req, res) => {
 
 prof.put("/alunos/:id", wrap(async (req, res) => {
   const id = idParam(req.params.id);
-  const { nome, email, cpf } = pessoa(req.body, false);
+  const { nome, email, cpf } = pessoa(req.body);
   const turma = txt(req.body.turma, 30), matricula = txt(req.body.matricula, 30);
   if (!turma || !matricula) throw new Erro(400, "Informe turma e matrícula.");
   let sql = "UPDATE alunos SET nome=?, email=?, turma=?, matricula=?";
